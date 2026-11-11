@@ -1,23 +1,26 @@
 import { cookies } from 'next/headers'
-import { getRole, type UserRole } from './roles'
+import { redirect } from 'next/navigation'
+import { isDemoAuthEnabled, resolveSession, SESSION_COOKIE, type DemoSession } from './roles'
 import { isValidDemoAccount } from './demo-accounts'
+import { sessionKey } from './session-key'
+import { signSessionValue, verifySessionValue } from './session-token'
 
-const COOKIE_NAME = 'propertyops_demo_session'
+export type Session = DemoSession
 
-export function isDemoAuthEnabled(): boolean {
-  return process.env.NEXT_PUBLIC_DEMO_AUTH === 'enabled'
-}
-
-export interface Session {
-  email: string
-  role: UserRole
-}
-
+// Same rule as the proxy: a cookie without a valid signature, a cookie that is not a demo account,
+// or any cookie while the demo login is disabled, is no session at all.
 export async function getSession(): Promise<Session | null> {
   const store = await cookies()
-  const email = store.get(COOKIE_NAME)?.value ?? null
-  if (!email) return null
-  return { email, role: getRole(email) }
+  return resolveSession(verifySessionValue(store.get(SESSION_COOKIE)?.value, sessionKey()))
+}
+
+// Used by the dashboard layout and the incidents page, which must never render without a session.
+// The proxy already redirects; this keeps them from rendering, and the incidents page from falling
+// back to the unfiltered view, if a request ever gets past it.
+export async function requireSession(): Promise<Session> {
+  const session = await getSession()
+  if (!session) redirect('/login')
+  return session
 }
 
 // Error codes (localized in the client via the i18n dictionary)
@@ -34,11 +37,16 @@ export async function signInLocal(
     return { error: 'invalidCredentials' }
   }
   const store = await cookies()
-  store.set(COOKIE_NAME, email, { httpOnly: true, path: '/', sameSite: 'lax' })
+  store.set(SESSION_COOKIE, signSessionValue(email, sessionKey()), {
+    httpOnly: true,
+    path: '/',
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+  })
   return null
 }
 
 export async function signOutLocal(): Promise<void> {
   const store = await cookies()
-  store.delete(COOKIE_NAME)
+  store.delete(SESSION_COOKIE)
 }

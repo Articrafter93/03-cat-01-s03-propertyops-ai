@@ -1,7 +1,7 @@
 import { TopBar } from "@/components/layout/TopBar";
 import { getIncidents, getRooms, getTechnicians, getTenants } from "@/lib/data";
-import { getSession } from "@/lib/auth";
-import { getRole, DEMO_TECNICO_ID } from "@/lib/roles";
+import { requireSession } from "@/lib/auth";
+import { DEMO_TECNICO_ID } from "@/lib/roles";
 import { getDictionary, getLocale } from "@/lib/i18n/server";
 import { fmtRelativeTime } from "@/lib/i18n/format";
 import { enIncidentDescription } from "@/lib/i18n/seed-en";
@@ -11,8 +11,7 @@ import { IncidentsClient, type IncidentRow } from "./IncidentsClient";
 const PRIORITY_ORDER = { Emergencia: 0, Alta: 1, Media: 2, Baja: 3 };
 
 export default async function IncidenciasPage() {
-  const session = await getSession();
-  const role = getRole(session?.email);
+  const { role } = await requireSession();
 
   const [allIncidents, rooms, technicians, tenants, dict, locale] = await Promise.all([
     getIncidents(),
