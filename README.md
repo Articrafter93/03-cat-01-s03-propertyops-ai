@@ -18,7 +18,7 @@ Executive dashboard for managing rooms-for-rent operations — covering the full
 |------|-----------|--------|
 | Dashboard | Next.js 16 (App Router) · TypeScript · Tailwind v4 · shadcn/ui · Recharts | ✅ Implemented |
 | Data | Static seed (`frontend/data/seed.json`, fixed date 2026-04-25) typed via `lib/seed.ts` | ✅ Implemented |
-| Auth | Local mock via cookie (`lib/auth.ts`, gated by `NEXT_PUBLIC_DEMO_AUTH`) | ✅ Implemented |
+| Auth | Local mock via an HMAC-signed cookie (`lib/auth.ts`, `lib/session-token.ts`, gated by `NEXT_PUBLIC_DEMO_AUTH`) | ✅ Implemented |
 | Deployment | Vercel | 🎯 Target |
 
 ### Key technical decisions (the *why*)
@@ -32,7 +32,19 @@ Executive dashboard for managing rooms-for-rent operations — covering the full
   (`lib/data.ts`), so swapping the seed for a real DB later is a single-layer change, not a rewrite.
 - **Local mock auth over a real IdP** — role-based access (admin vs. maintenance technician) is
   enforced at a **real boundary** (Next.js middleware, `proxy.ts`), not just hidden in the UI. The
-  mock is gated by `NEXT_PUBLIC_DEMO_AUTH` so it can never ship enabled to a real production build.
+  mock is gated by `NEXT_PUBLIC_DEMO_AUTH` so it can never ship enabled to a real production build:
+  the proxy and the server helpers share one rule (`lib/roles.ts`), so without the flag no cookie
+  opens a page, and an email that is not a demo account gets no role instead of a default.
+- **Signed session cookie with a per-build key** — the cookie carries the email plus an
+  HMAC-SHA256 signature (`lib/session-token.ts`), so it cannot be forged by editing it. The key is
+  generated when the build starts (`next.config.ts`) and inlined at compile time into one module,
+  `lib/session-key.ts`, marked `server-only`: a client component that imported it would fail the
+  build. It is not a `NEXT_PUBLIC_` variable, needs no manual secret, and a redeploy simply signs
+  everyone out. Like any server-side value, it is part of the server build output (`.next/server`,
+  `.next/required-server-files.json`), which is never served: whoever holds that output can sign
+  sessions, which here grants nothing beyond the public demo accounts. In production builds the
+  cookie is `Secure`, so the app must be served over HTTPS (or `localhost`) for the login to stick.
+  Unit tests run on Node's built-in test runner (`npm test`), with no test dependency.
 - **Zero-dependency i18n (EN/ES)** — a cookie-based dictionary (`lib/i18n/`) with English as the
   default avoids pulling a full i18n framework for a two-locale toggle; formatters are locale-aware
   and `<html lang>` is set dynamically.
@@ -87,12 +99,15 @@ PropertyOps AI/
 │   │   └── ui/                  # KpiCard, StatusBadge, SlaIndicator, BeforeAfterSlider
 │   ├── data/
 │   │   └── seed.json            # Demo data (fixed date: 2026-04-25)
+│   ├── tests/                   # Unit tests for the session rules (node --test)
 │   └── lib/
 │       ├── seed.ts              # Data source: typed seed.json + helpers
 │       ├── data.ts              # Data-access layer (async API over the seed)
-│       ├── auth.ts              # Local mock session via cookie
+│       ├── auth.ts              # Local mock session (sign in, sign out, current session)
+│       ├── session-token.ts     # HMAC signature of the session cookie
+│       ├── session-key.ts       # Per-build signing key (server-only)
 │       ├── demo-accounts.ts     # Demo accounts (login selector)
-│       ├── roles.ts             # Role mapping + role-gating
+│       ├── roles.ts             # Demo identity: role mapping, session rule, role-gating
 │       ├── i18n/                # Zero-dependency EN/ES dictionary
 │       └── types.ts             # TypeScript interfaces for the entities
 ├── docs/
@@ -122,6 +137,14 @@ NEXT_PUBLIC_DEMO_AUTH=enabled
 
 Demo accounts (password pre-filled `Demo1234!`): `admin@propertyops.demo` (admin → `/dashboard`),
 `tecnico@propertyops.demo` (technician → `/incidents`).
+
+The session signing key needs no setup: `next.config.ts` generates one per build. Unit tests
+(Node.js 22.18 or newer, which loads the TypeScript modules under test natively):
+
+```bash
+cd frontend
+npm test
+```
 
 ---
 
